@@ -35,6 +35,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.pulsar.common.schema.SchemaType;
 import org.apache.commons.lang3.reflect.FieldUtils;
 import org.apache.kafka.connect.file.FileStreamSourceConnector;
 import org.apache.kafka.connect.runtime.TaskConfig;
@@ -327,6 +328,44 @@ public class KafkaConnectSourceTest extends ProducerConsumerBase {
         assertEquals("abc-123", record.getProperties().get("event-id"));
         assertEquals("42", record.getProperties().get("event-version"));
         assertEquals(3, record.getProperties().size());
+    }
+
+    @Test
+    void testGetSchemaReturnsBytesWhenConnectSchemaIsPresent() throws Exception {
+        Map<String, Object> config = getConfig();
+        config.put(TaskConfig.TASK_CLASS_CONFIG, "org.apache.kafka.connect.file.FileStreamSourceTask");
+
+        kafkaConnectSource = new KafkaConnectSource();
+        kafkaConnectSource.open(config, context);
+
+        org.apache.kafka.connect.data.Schema connectKeySchema =
+                org.apache.kafka.connect.data.Schema.STRING_SCHEMA;
+        org.apache.kafka.connect.data.Schema connectValueSchema =
+                org.apache.kafka.connect.data.SchemaBuilder.struct()
+                        .field("aggregate_id", org.apache.kafka.connect.data.Schema.STRING_SCHEMA)
+                        .field("tenant_id", org.apache.kafka.connect.data.Schema.STRING_SCHEMA)
+                        .field("payload", org.apache.kafka.connect.data.Schema.OPTIONAL_STRING_SCHEMA)
+                        .build();
+
+        Map<String, Object> sourcePartition = new HashMap<>();
+        Map<String, Object> sourceOffset = new HashMap<>();
+        Map<String, Object> value = new HashMap<>();
+        sourcePartition.put("partition", "0");
+        sourceOffset.put("offset", 0);
+        value.put("aggregate_id", "abc-123");
+        value.put("tenant_id", "00000000-0000-0000-0000-000000000001");
+        value.put("payload", "{}");
+
+        SourceRecord srcRecord = new SourceRecord(
+                sourcePartition, sourceOffset, topicName,
+                connectKeySchema, "my-key",
+                connectValueSchema, value
+        );
+
+        KafkaSourceRecord record = kafkaConnectSource.processSourceRecord(srcRecord);
+
+        assertEquals(SchemaType.BYTES, record.getKeySchema().getSchemaInfo().getType());
+        assertEquals(SchemaType.BYTES, record.getValueSchema().getSchemaInfo().getType());
     }
 
     @Test

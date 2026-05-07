@@ -57,6 +57,13 @@ public class KafkaConnectSource extends AbstractKafkaConnectSource<KeyValue<byte
     private boolean jsonWithEnvelope = false;
     private static final String JSON_WITH_ENVELOPE_CONFIG = "json-with-envelope";
 
+    // Package-private so unit tests can set them directly (tests bypass open()).
+    // When false, schema building is skipped and Schema.BYTES is returned instead.
+    boolean keySchemasEnabled = true;
+    boolean valueSchemasEnabled = true;
+    private static final String KEY_CONVERTER_SCHEMAS_ENABLE_CONFIG = "key.converter.schemas.enable";
+    private static final String VALUE_CONVERTER_SCHEMAS_ENABLE_CONFIG = "value.converter.schemas.enable";
+
     private Map<String, Predicate<SourceRecord>> predicates = new HashMap<>();
 
     private record PredicatedTransform(
@@ -74,6 +81,18 @@ public class KafkaConnectSource extends AbstractKafkaConnectSource<KeyValue<byte
             config.put(JsonConverterConfig.SCHEMAS_ENABLE_CONFIG, false);
         }
         log.info("jsonWithEnvelope: {}", jsonWithEnvelope);
+
+        Object keySchemasEnableObj = config.get(KEY_CONVERTER_SCHEMAS_ENABLE_CONFIG);
+        if (keySchemasEnableObj != null) {
+            keySchemasEnabled = Boolean.parseBoolean(keySchemasEnableObj.toString());
+        }
+        log.info("keySchemasEnabled: {}", keySchemasEnabled);
+
+        Object valueSchemasEnableObj = config.get(VALUE_CONVERTER_SCHEMAS_ENABLE_CONFIG);
+        if (valueSchemasEnableObj != null) {
+            valueSchemasEnabled = Boolean.parseBoolean(valueSchemasEnableObj.toString());
+        }
+        log.info("valueSchemasEnabled: {}", valueSchemasEnabled);
 
         initPredicates(config);
         initTransforms(config);
@@ -215,25 +234,6 @@ public class KafkaConnectSource extends AbstractKafkaConnectSource<KeyValue<byte
 
             this.topicName = Optional.of(srcRecord.topic());
 
-            if (srcRecord.keySchema() != null) {
-                keySchema = readerCache.getIfPresent(srcRecord.keySchema());
-            }
-            if (srcRecord.valueSchema() != null) {
-                valueSchema = readerCache.getIfPresent(srcRecord.valueSchema());
-            }
-
-            if (srcRecord.keySchema() != null && keySchema == null) {
-                keySchema = new KafkaSchemaWrappedSchema(
-                        avroData.fromConnectSchema(srcRecord.keySchema()), keyConverter);
-                readerCache.put(srcRecord.keySchema(), keySchema);
-            }
-
-            if (srcRecord.valueSchema() != null && valueSchema == null) {
-                valueSchema = new KafkaSchemaWrappedSchema(
-                        avroData.fromConnectSchema(srcRecord.valueSchema()), valueConverter);
-                readerCache.put(srcRecord.valueSchema(), valueSchema);
-            }
-
             this.eventTime = Optional.ofNullable(srcRecord.timestamp());
             this.partitionId = Optional.of(srcRecord.sourcePartition()
                 .entrySet()
@@ -264,20 +264,34 @@ public class KafkaConnectSource extends AbstractKafkaConnectSource<KeyValue<byte
 
         @Override
         public Schema<byte[]> getKeySchema() {
-            if (jsonWithEnvelope || keySchema == null) {
+            if (jsonWithEnvelope || !keySchemasEnabled || srcRecord.keySchema() == null) {
                 return Schema.BYTES;
-            } else {
-                return keySchema;
             }
+            if (keySchema == null) {
+                keySchema = readerCache.getIfPresent(srcRecord.keySchema());
+            }
+            if (keySchema == null) {
+                keySchema = new KafkaSchemaWrappedSchema(
+                        avroData.fromConnectSchema(srcRecord.keySchema()), keyConverter);
+                readerCache.put(srcRecord.keySchema(), keySchema);
+            }
+            return keySchema;
         }
 
         @Override
         public Schema<byte[]> getValueSchema() {
-            if (jsonWithEnvelope || valueSchema == null) {
+            if (jsonWithEnvelope || !valueSchemasEnabled || srcRecord.valueSchema() == null) {
                 return Schema.BYTES;
-            } else {
-                return valueSchema;
             }
+            if (valueSchema == null) {
+                valueSchema = readerCache.getIfPresent(srcRecord.valueSchema());
+            }
+            if (valueSchema == null) {
+                valueSchema = new KafkaSchemaWrappedSchema(
+                        avroData.fromConnectSchema(srcRecord.valueSchema()), valueConverter);
+                readerCache.put(srcRecord.valueSchema(), valueSchema);
+            }
+            return valueSchema;
         }
 
         @Override
